@@ -1,0 +1,10 @@
+﻿.vscode/
+__pycache__/
+*.parquet
+*.duckdb
+*.log
+*.db
+tempCodeRunnerFile.py
+.env
+venv/
+.venv/
