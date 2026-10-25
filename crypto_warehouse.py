@@ -26,8 +26,21 @@ import schedule
 import json
 import time
 import boto3
+import os
+from dotenv import load_dotenv
 from datetime import datetime
 
+
+load_dotenv() # reading secret file
+
+# Create s3 client INSIDE the function - this fixes your error
+s3 = boto3.client(
+    "s3",
+    endpoint_url=os.getenv("R2_ENDPOINT"),
+    aws_access_key_id=os.getenv("R2_ACCESS_KEY"),
+    aws_secret_access_key=os.getenv("R2_SECRET_KEY"),
+    region_name="auto"
+)
 # ---------------------------
 # Logging Configuration
 # ---------------------------
@@ -226,6 +239,17 @@ def load_to_duckdb(df):
     logging.info("DuckDB load completed")
 
 
+def upload_to_r2(parquet_file):
+
+    s3.upload_file(
+        parquet_file,
+        os.getenv("R2_BUCKET"),
+        parquet_file
+    )
+
+    logging.info(f"{parquet_file} uploaded to R2")
+
+
 # ---------------------------
 # Main Pipeline
 # ---------------------------
@@ -277,14 +301,17 @@ def run_pipeline():
     # ---------------------------
     # Save Parquet
     # ---------------------------
-
+    parquet_file = (f"crypto_prices_{snapshot_date}.parquet")
+    
     crypto_df.to_parquet(
-        "crypto_prices.parquet",
+        parquet_file,
         index=False
     )
-
     logging.info("Parquet file created")
 
+    logging.info("uploading `crypto_prices.parquet` to cloudflare")
+    upload_to_r2(parquet_file)
+    logging.info(f"{parquet_file} uploaded successfully to cloudflare")
 
     # ---------------------------
     # Validate & Load
@@ -305,22 +332,9 @@ def run_pipeline():
     logging.info("pipeline completed")
 
 
-
-# ==================================
-# SCHEDULER
-# ==================================
-# run_pipeline()
-# schedule.every().day().at("08:00").do(run_pipeline)
-
-# logging.info("Scheduler started")
-
-# while True:
-#     schedule.run_pending()
-#     time.sleep(60)
-
-
 # run pipeline
-run_pipeline()
+if __name__ == "__main__":
+    run_pipeline()
 
 # ---------------------------
 # Verify Warehouse
