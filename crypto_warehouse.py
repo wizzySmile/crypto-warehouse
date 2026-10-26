@@ -310,6 +310,10 @@ def run_pipeline():
     logging.info("Parquet file created")
 
     logging.info("uploading `crypto_prices.parquet` to cloudflare")
+    logging.info(f"R2_BUCKET={os.getenv('R2_BUCKET')}")
+    logging.info(f"R2_ENDPOINT={os.getenv('R2_ENDPOINT')}")
+    logging.info(f"R2_ACCESS_KEY={os.getenv('R2_ACCESS_KEY') is not None}")
+    logging.info(f"R2_SECRET_KEY={os.getenv('R2_SECRET_KEY') is not None}")
     upload_to_r2(parquet_file)
     logging.info(f"{parquet_file} uploaded successfully to cloudflare")
 
