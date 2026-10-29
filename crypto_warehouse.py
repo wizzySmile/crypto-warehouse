@@ -29,6 +29,10 @@ import boto3
 import os
 from dotenv import load_dotenv
 from datetime import datetime
+from pathlib import Path
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(PROJECT_ROOT, "crypto_warehouse.duckdb")
 
 
 load_dotenv() # reading secret file
@@ -194,7 +198,7 @@ def load_to_duckdb(df):
 
     logging.info("Loading data into DuckDB")
 
-    conn = db.connect("crypto_warehouse.duckdb")
+    conn = db.connect(DB_PATH)
 
     conn.register("crypto_df", df)
 
@@ -241,11 +245,14 @@ def load_to_duckdb(df):
 
 
 def upload_to_r2(parquet_file):
+    
+    file_name_only = os.path.basename(parquet_file)
+    object_key = f"crypto/{datetime.now():%Y/%m/%d}/{file_name_only}"
 
     s3.upload_file(
         parquet_file,
         os.getenv("R2_BUCKET"),
-        parquet_file
+        object_key
     )
 
     logging.info(f"{parquet_file} uploaded to R2")
@@ -302,8 +309,9 @@ def run_pipeline():
     # ---------------------------
     # Save Parquet
     # ---------------------------
-    parquet_file = (f"crypto_prices_{snapshot_date}.parquet")
-    
+    # parquet_file = (f"crypto_prices_{snapshot_date}.parquet")
+    parquet_file = os.path.join(
+        PROJECT_ROOT, f"crypto_prices_{snapshot_date}.parquet")
     crypto_df.to_parquet(
         parquet_file,
         index=False
@@ -336,22 +344,3 @@ def run_pipeline():
 # run pipeline
 if __name__ == "__main__":
     run_pipeline()
-
-# ---------------------------
-# Verify Warehouse
-# ---------------------------
-
-
-import duckdb as db
-conn = db.connect('crypto_warehouse.duckdb')
-
-result = conn.execute("""
-    SELECT *
-    FROM crypto_prices
-""").df()
-
-print(result)
-
-conn.close()
-
-
