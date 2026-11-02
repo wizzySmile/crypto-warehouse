@@ -18,4 +18,3 @@ The pipeline collects daily cryptocurrency market metrics from the CoinGecko API
 # Architecture
 <img width="1280" height="853" alt="WhatsApp Image 2026-11-02 at 2 58 24 PM" src="https://github.com/user-attachments/assets/c0a6684b-3957-4f3f-a0dc-ce8c5bbc6e84" />
 
-<img width="1280" height="853" alt="WhatsApp Image 2026-11-02 at 2 58 24 PM" src="https://github.com/user-attachments/assets/c0a6684b-3957-4f3f-a0dc-ce8c5bbc6e84" />
