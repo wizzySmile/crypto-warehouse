@@ -3,7 +3,6 @@ import pandas as pd
 import duckdb as db
 import requests
 import logging
-import schedule
 import json
 import time
 import boto3
@@ -271,7 +270,8 @@ def upload_to_r2(file_path):
     now = datetime.now(timezone.utc)
     # Store files using date-based partitions to create
     # a scalable data lake structure
-    r2_key = f"crypto/{now.year}/{now.month:02d}/{now.day:02d}/crypto_prices.parquet"
+    snapshot_date = datetime.now().date()
+    r2_key = f"crypto/{now.year}/{now.month:02d}/{now.day:02d}/crypto_prices_{snapshot_date}.parquet"
 
     logging.info(f"Uploading to R2: {r2_key}")
     s3_client.upload_file(str(file_path), R2_BUCKET, r2_key)
