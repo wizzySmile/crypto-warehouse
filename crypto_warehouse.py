@@ -1,23 +1,3 @@
-# ✅ Requests
-# ✅ Error Handling
-# ✅ Logging
-# ✅ JSON
-# ✅ Sessions
-# ✅ Functions
-# ✅ Extract
-# ✅ Transform
-# ✅ Load(DuckDB)
-
-# ✅ Validate
-# ✅ Parquet
-# ✅ DuckDB querying Parquet
-# ✅ Scheduling
-# ➡ Data Warehouse Modelling
-# ➡ Cloud Storage ➡ Cloudflare R2
-# ➡ Airflow
-# ➡ PySpark
-
-
 from botocore.config import Config
 import pandas as pd
 import duckdb as db
@@ -36,7 +16,9 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(PROJECT_ROOT, "crypto_warehouse.duckdb")
 
 
-load_dotenv() # reading secret file
+# Load Cloudflare R2 credentials from local .env file
+# In Fly.io these values are provided through secrets instead
+load_dotenv()
 R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID")
 R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
@@ -48,7 +30,6 @@ R2_BUCKET = os.getenv("R2_BUCKET")
 # Logging Configuration
 # ---------------------------
 
-# setting logging configuration
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
@@ -85,11 +66,13 @@ def extract_coin_data(
 
     url = (
         f"https://api.coingecko.com/api/v3/coins/{coin}/history?date={snapshot_date}")
-
+    
+    # Retry up to 3 times to handle temporary API failures
+    # such as timeouts and rate limits
     for attempt in range(3):
 
         logging.info(f"{coin} - Attempt {attempt + 1}")
-# error handling.. 
+        # error handling.. 
         try:
 
             logging.info(f"Fetching {coin} data")
@@ -107,7 +90,8 @@ def extract_coin_data(
             return data
 
         except requests.exceptions.Timeout:
-
+            # Exponential backoff:
+            # 5s → 10s → 20s
             wait_time = 5 * (2 ** attempt)
 
             logging.warning(f"{coin} timed out. Waiting {wait_time} seconds before retry...")
@@ -167,11 +151,15 @@ def transform_data(
 # ---------------------------
 
 def validate_data(df):
+
+    # Ensure all requested coins were successfully extracted
     expected_rows = len(coins)
     if df.empty:
         logging.error("DataFrame is empty")
         return False
-    
+
+    # Detect duplicate business keys before loading
+    # (coin_id + snapshot_date)
     duplicate_count = df.duplicated(
         subset=[
             "coin_id",
@@ -201,6 +189,7 @@ def load_to_duckdb(df):
 
     conn.register("crypto_df", df)
 
+    # Historical warehouse table storing daily crypto snapshots
     conn.execute("""
         CREATE TABLE IF NOT EXISTS crypto_prices (
         "coin_id" VARCHAR,
@@ -218,6 +207,10 @@ def load_to_duckdb(df):
     FROM crypto_prices
     """).fetchone()[0]
 
+    # Business key:
+    # A crypto snapshot is uniquely identified by
+    # coin_id + snapshot_date.
+    # Prevent duplicate loads when the pipeline is re-run.
     conn.execute("""
         INSERT INTO crypto_prices
         SELECT *
@@ -225,7 +218,6 @@ def load_to_duckdb(df):
         WHERE NOT EXISTS (
         SELECT 1
         FROM crypto_prices cp
-
         WHERE cp.coin_id = cd.coin_id
         AND cp.snapshot_date = cd.snapshot_date
 
@@ -277,6 +269,8 @@ def upload_to_r2(file_path):
         )
 
     now = datetime.now(timezone.utc)
+    # Store files using date-based partitions to create
+    # a scalable data lake structure
     r2_key = f"crypto/{now.year}/{now.month:02d}/{now.day:02d}/crypto_prices.parquet"
 
     logging.info(f"Uploading to R2: {r2_key}")
@@ -291,7 +285,6 @@ def upload_to_r2(file_path):
 
 def run_pipeline():
 
-    # starting pipeline
     start_time = time.time()
     logging.info("pipeline started..")
 
@@ -359,10 +352,10 @@ def run_pipeline():
 
         logging.info("Loaded to data warehouse")
 
-    # pipeline ends.
     end_time = time.time()
 
-    # calculate pipeline duration
+    # Capture total execution time for monitoring
+    # and performance tracking
     duration = round(end_time - start_time, 2)
     logging.info(f"pipeline duration: {duration} seconds")
     logging.info("pipeline completed")
