@@ -18,6 +18,7 @@
 # ➡ PySpark
 
 
+from botocore.config import Config
 import pandas as pd
 import duckdb as db
 import requests
@@ -28,7 +29,7 @@ import time
 import boto3
 import os
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -36,15 +37,13 @@ DB_PATH = os.path.join(PROJECT_ROOT, "crypto_warehouse.duckdb")
 
 
 load_dotenv() # reading secret file
+R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID")
+R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
+R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
+R2_ENDPOINT = os.getenv("R2_ENDPOINT")
+R2_BUCKET = os.getenv("R2_BUCKET")
 
-# Create s3 client INSIDE the function - this fixes your error
-s3 = boto3.client(
-    "s3",
-    endpoint_url=os.getenv("R2_ENDPOINT"),
-    aws_access_key_id=os.getenv("R2_ACCESS_KEY"),
-    aws_secret_access_key=os.getenv("R2_SECRET_KEY"),
-    region_name="auto"
-)
+
 # ---------------------------
 # Logging Configuration
 # ---------------------------
@@ -244,18 +243,46 @@ def load_to_duckdb(df):
     logging.info("DuckDB load completed")
 
 
-def upload_to_r2(parquet_file):
-    
-    file_name_only = os.path.basename(parquet_file)
-    object_key = f"crypto/{datetime.now():%Y/%m/%d}/{file_name_only}"
+def upload_to_r2(file_path):
 
-    s3.upload_file(
-        parquet_file,
-        os.getenv("R2_BUCKET"),
-        object_key
-    )
+    # Try new config, fall back to old if needed (for old containers)
+    try:
+        from botocore import __version__ as botocore_version
+        print(f"botocore version: {botocore_version}")
+    except:
+        pass
 
-    logging.info(f"{parquet_file} uploaded to R2")
+    try:
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=R2_ENDPOINT,
+            aws_access_key_id=R2_ACCESS_KEY,
+            aws_secret_access_key=R2_SECRET_KEY,
+            region_name='auto',
+            config=Config(
+                request_checksum_calculation='when_required',
+                response_checksum_validation='when_required',
+            )
+        )
+    except TypeError:
+        # Old botocore in Docker - use simple config
+        print("Using fallback config for old botocore")
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=R2_ENDPOINT,
+            aws_access_key_id=R2_ACCESS_KEY,
+            aws_secret_access_key=R2_SECRET_KEY,
+            region_name='auto',
+            config=Config(signature_version='s3v4')
+        )
+
+    now = datetime.now(timezone.utc)
+    r2_key = f"crypto/{now.year}/{now.month:02d}/{now.day:02d}/crypto_prices.parquet"
+
+    logging.info(f"Uploading to R2: {r2_key}")
+    s3_client.upload_file(str(file_path), R2_BUCKET, r2_key)
+    logging.info(f"Upload successful: {r2_key}")
+    return r2_key
 
 
 # ---------------------------
