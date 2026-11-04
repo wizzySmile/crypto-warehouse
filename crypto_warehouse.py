@@ -329,9 +329,14 @@ def run_pipeline():
     # ---------------------------
     # Save Parquet
     # ---------------------------
-    # parquet_file = (f"crypto_prices_{snapshot_date}.parquet")
+
+    # 1. Create data folder path
+    DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+    os.makedirs(DATA_DIR, exist_ok=True)  # create it if it doesn't exist
+
+    # 2. Save inside data folder, not PROJECT_ROOT
     parquet_file = os.path.join(
-        PROJECT_ROOT, f"crypto_prices_{snapshot_date}.parquet")
+        DATA_DIR, f"crypto_prices_{snapshot_date}.parquet")
     crypto_df.to_parquet(
         parquet_file,
         index=False
