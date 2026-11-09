@@ -23,6 +23,8 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1
+    env_file:
+      - .env
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
@@ -30,7 +32,9 @@ services:
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
     volumes:
       - ./airflow/dags:/opt/airflow/dags
-      - ./:/opt/airflow/project
+      - ./crypto_warehouse.py:/opt/airflow/project/crypto_warehouse.py
+      - ./crypto_warehouse.duckdb:/opt/airflow/project/crypto_warehouse.duckdb
+      - ./data:/opt/airflow/project/data
     ports:
       - "8080:8080"
     command: >
