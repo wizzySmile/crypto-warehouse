@@ -1,6 +1,7 @@
 from botocore.config import Config
 import pandas as pd
 import duckdb as db
+import psycopg2
 import requests
 import logging
 import json
@@ -14,7 +15,6 @@ from pathlib import Path
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(PROJECT_ROOT, "crypto_warehouse.duckdb")
 
-
 # Load Cloudflare R2 credentials from local .env file
 # In Fly.io these values are provided through secrets instead
 load_dotenv()
@@ -23,7 +23,7 @@ R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT")
 R2_BUCKET = os.getenv("R2_BUCKET")
-
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # ---------------------------
 # Logging Configuration
@@ -35,9 +35,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.FileHandler(
-            "crypto_logging.log",
-            mode="w"
-        ),
+            "/data/crypto_logging.log" if os.path.exists("/data") else "crypto_logging.log", mode="w"),
         logging.StreamHandler()
     ]
 )
@@ -57,6 +55,7 @@ coins = [
 # Extract
 # ---------------------------
 
+
 def extract_coin_data(
     coin,
     snapshot_date,
@@ -65,13 +64,13 @@ def extract_coin_data(
 
     url = (
         f"https://api.coingecko.com/api/v3/coins/{coin}/history?date={snapshot_date}")
-    
+
     # Retry up to 3 times to handle temporary API failures
     # such as timeouts and rate limits
     for attempt in range(3):
 
         logging.info(f"{coin} - Attempt {attempt + 1}")
-        # error handling.. 
+        # error handling..
         try:
 
             logging.info(f"Fetching {coin} data")
@@ -93,7 +92,8 @@ def extract_coin_data(
             # 5s → 10s → 20s
             wait_time = 5 * (2 ** attempt)
 
-            logging.warning(f"{coin} timed out. Waiting {wait_time} seconds before retry...")
+            logging.warning(
+                f"{coin} timed out. Waiting {wait_time} seconds before retry...")
             time.sleep(wait_time)
             continue
 
@@ -103,7 +103,8 @@ def extract_coin_data(
 
             if response.status_code == 429:
 
-                logging.warning(f"{coin} rate limited. Waiting {wait_time} seconds before retry...")
+                logging.warning(
+                    f"{coin} rate limited. Waiting {wait_time} seconds before retry...")
                 time.sleep(wait_time)
                 continue
 
@@ -123,10 +124,10 @@ def extract_coin_data(
 
     return None
 
-
 # ---------------------------
 # Transform
 # ---------------------------
+
 
 def transform_data(
     data,
@@ -144,10 +145,10 @@ def transform_data(
     }
     return record
 
-
 # ---------------------------
 # Validate
 # ---------------------------
+
 
 def validate_data(df):
 
@@ -163,7 +164,7 @@ def validate_data(df):
         subset=[
             "coin_id",
             "snapshot_date"]).sum()
-    
+
     if len(df) != expected_rows:
         logging.error(f"Expected {expected_rows} rows but got {len(df)}")
         return False
@@ -171,14 +172,18 @@ def validate_data(df):
     if duplicate_count > 0:
         logging.error(f"Found {duplicate_count} duplicates")
         return False
-    
+
     logging.info(f"Rows extracted: {len(df)}")
     return True
-
 
 # ---------------------------
 # Load
 # ---------------------------
+
+# ---------------------------
+# DuckDB Load
+# ---------------------------
+
 
 def load_to_duckdb(df):
 
@@ -233,6 +238,69 @@ def load_to_duckdb(df):
     logging.info(f"Rows inserted: {rows_inserted}")
     logging.info("DuckDB load completed")
 
+# ---------------------------
+# Neon Load
+# ---------------------------
+
+
+def load_to_neon(df):
+
+    logging.info("Loading data into Neon")
+
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor()
+
+    # Historical warehouse table storing daily crypto snapshots
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS crypto_prices (
+            coin_id VARCHAR,
+            symbol VARCHAR,
+            snapshot_date DATE,
+            price_usd DOUBLE PRECISION,
+            market_cap_usd DOUBLE PRECISION,
+            total_volume_usd DOUBLE PRECISION,
+            ingestion_time TIMESTAMP
+        );
+    """)
+    conn.commit()
+
+    cur.execute("SELECT COUNT(*) FROM crypto_prices")
+    before_count = cur.fetchone()[0]
+
+    # Business key:
+    # A crypto snapshot is uniquely identified by
+    # coin_id + snapshot_date.
+    # Prevent duplicate loads when the pipeline is re-run.
+    for _, row in df.iterrows():
+        cur.execute("""
+            INSERT INTO crypto_prices
+            (coin_id, symbol, snapshot_date, price_usd, market_cap_usd, total_volume_usd, ingestion_time)
+            SELECT %s, %s, %s, %s, %s, %s, %s
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM crypto_prices cp
+                WHERE cp.coin_id = %s
+                AND cp.snapshot_date = %s
+            )
+        """, (
+            row['coin_id'], row['symbol'], row['snapshot_date'],
+            row['price_usd'], row['market_cap_usd'],
+            row['total_volume_usd'], row['ingestion_time'],
+            row['coin_id'], row['snapshot_date']
+        ))
+
+    conn.commit()
+
+    cur.execute("SELECT COUNT(*) FROM crypto_prices")
+    after_count = cur.fetchone()[0]
+
+    cur.close()
+    conn.close()
+
+    rows_inserted = after_count - before_count
+    logging.info(f"Rows inserted: {rows_inserted}")
+    logging.info("Neon load completed")
+
 
 def upload_to_r2(file_path):
 
@@ -278,16 +346,15 @@ def upload_to_r2(file_path):
     logging.info(f"Upload successful: {r2_key}")
     return r2_key
 
-
 # ---------------------------
 # Main Pipeline
 # ---------------------------
+
 
 def run_pipeline():
 
     start_time = time.time()
     logging.info("pipeline started..")
-
 
 # ---------------------------
 # Session
@@ -298,16 +365,18 @@ def run_pipeline():
         "accept": "application/json"
     })
     snapshot_date = datetime.now().date()
-
+    api_date = snapshot_date.strftime("%d-%m-%Y")
 
     crypto_data = []
 
-    for coin in coins:
-        
+    for i, coin in enumerate(coins):
+        if i > 0:
+            logging.info(f"Waiting 15s before {coin} to avoid rate limit...")
+            time.sleep(15)
 
         raw_data = extract_coin_data(
             coin,
-            snapshot_date,
+            api_date,
             session
         )
 
@@ -320,32 +389,9 @@ def run_pipeline():
 
             crypto_data.append(clean_data)
 
-
     crypto_df = pd.DataFrame(crypto_data)
 
     logging.info("Crypto data cleaning completed")
-
-
-    # ---------------------------
-    # Save Parquet
-    # ---------------------------
-
-    # 1. Create data folder path
-    DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-    os.makedirs(DATA_DIR, exist_ok=True)  # create it if it doesn't exist
-
-    # 2. Save inside data folder, not PROJECT_ROOT
-    parquet_file = os.path.join(
-        DATA_DIR, f"crypto_prices_{snapshot_date}.parquet")
-    crypto_df.to_parquet(
-        parquet_file,
-        index=False
-    )
-    logging.info("Parquet file created")
-
-    logging.info("uploading `crypto_prices.parquet` to cloudflare")
-    upload_to_r2(parquet_file)
-    logging.info(f"{parquet_file} uploaded successfully to cloudflare")
 
     # ---------------------------
     # Validate & Load
@@ -353,9 +399,32 @@ def run_pipeline():
 
     if validate_data(crypto_df):
 
-        load_to_duckdb(crypto_df)
+        # ---------------------------
+        # Save Parquet
+        # ---------------------------
 
-        logging.info("Loaded to data warehouse")
+        # 1. Create data folder path
+        DATA_DIR = "/data" if os.path.exists(
+            "/data") else os.path.join(PROJECT_ROOT, "data")
+        os.makedirs(DATA_DIR, exist_ok=True)  # create it if it doesn't exist
+
+        # 2. Save inside data folder, not PROJECT_ROOT
+        parquet_file = os.path.join(
+            DATA_DIR, f"crypto_prices_{snapshot_date}.parquet")
+        crypto_df.to_parquet(
+            parquet_file,
+            index=False
+        )
+        logging.info("Parquet file created")
+
+        logging.info("uploading `crypto_prices.parquet` to cloudflare")
+        upload_to_r2(parquet_file)
+        logging.info(f"{parquet_file} uploaded successfully to cloudflare")
+
+        load_to_duckdb(crypto_df)
+        load_to_neon(crypto_df)
+
+        logging.info("Loaded to data warehouse local duckdb and Neon cloud")
 
     end_time = time.time()
 

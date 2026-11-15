@@ -7,16 +7,25 @@ app = 'crypto-warehouse'
 primary_region = 'lhr'
 
 [build]
+  dockerfile = 'Dockerfile.airflow'
+
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = 'stop'
+  auto_stop_machines = false
   auto_start_machines = true
-  min_machines_running = 0
-  processes = ['app']
+  min_machines_running = 1
 
 [[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
-  cpus = 1
-  memory_mb = 1024
+  size = "shared-cpu-1x"
+  memory = "2048mb"
+
+[env]
+  AIRFLOW__CORE__EXECUTOR = 'SequentialExecutor'
+  AIRFLOW__CORE__LOAD_EXAMPLES = 'false'
+  AIRFLOW__WEBSERVER__WORKERS = '1'
+  AIRFLOW__SCHEDULER__PARSING_PROCESSES = '1'
+
+[[mounts]]
+  source = "crypto_data"
+  destination = "/data"

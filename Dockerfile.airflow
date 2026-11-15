@@ -1,3 +1,29 @@
-FROM apache/airflow:2.10.4
+# FROM apache/airflow:2.10.4
+# USER airflow
+# RUN python -m pip install --no-cache-dir duckdb==1.5.6 pandas pyarrow boto3 python-dotenv requests schedule python-dateutil
+
+FROM apache/airflow:2.8.1-python3.11
+
+USER root
+RUN apt-get update && apt-get install -y gcc && apt-get clean
+
 USER airflow
-RUN python -m pip install --no-cache-dir duckdb==1.5.6 pandas pyarrow boto3 python-dotenv requests schedule python-dateutil
+WORKDIR /opt/airflow
+
+COPY requirements.txt /opt/airflow/requirements.txt
+RUN pip install --no-cache-dir duckdb boto3 requests pandas
+# RUN pip install --no-cache-dir -r /opt/airflow/requirements.txt duckdb boto3
+
+COPY airflow/dags/ /opt/airflow/dags/
+COPY crypto_warehouse.py /opt/airflow/project/crypto_warehouse.py
+
+ENV AIRFLOW__CORE__LOAD_EXAMPLES=False
+ENV AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+ENV AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////data/airflow.db
+ENV DB_PATH=/data/crypto_warehouse.duckdb
+
+USER root
+COPY start.sh /opt/airflow/start.sh
+RUN sed -i 's/\r$//' /opt/airflow/start.sh && chmod +x /opt/airflow/start.sh
+USER airflow
+ENTRYPOINT ["/opt/airflow/start.sh"]

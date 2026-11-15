@@ -1,78 +1,219 @@
 from botocore.config import Config
-import boto3
-from dotenv import load_dotenv
 import pandas as pd
 import duckdb as db
+import psycopg2
 import requests
+import logging
+import json
 import time
+import boto3
 import os
 import sys
-from datetime import date, datetime, timedelta
+from dotenv import load_dotenv
+from datetime import datetime, timezone, date, timedelta
+from pathlib import Path
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(PROJECT_ROOT, "crypto_warehouse.duckdb")
 
-coins = ["bitcoin", "ethereum", "tether", "binancecoin", "ripple"]
+# Load Cloudflare R2 credentials from local .env file
+# In Fly.io these values are provided through secrets instead
+load_dotenv()
+R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID")
+R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
+R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
+R2_ENDPOINT = os.getenv("R2_ENDPOINT")
+R2_BUCKET = os.getenv("R2_BUCKET")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
+# ---------------------------
+# Logging Configuration
+# ---------------------------
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.FileHandler(
+            "/data/crypto_logging.log" if os.path.exists("/data") else "crypto_logging.log", mode="w"),
+        logging.StreamHandler()
+    ]
+)
+
+# ---------------------------
+# Parameters
+# ---------------------------
+coins = [
+    "bitcoin",
+    "ethereum",
+    "tether",
+    "binancecoin",
+    "ripple"
+]
+
+# ---------------------------
+# Dates to backfill
+# Usage:
+#   python backfill_yesterday.py              -> backfills yesterday
+#   python backfill_yesterday.py 2026-11-13   -> backfills 2026-11-13
+#   python backfill_yesterday.py 2026-11-13 2026-11-14 -> backfills both
+# ---------------------------
 if len(sys.argv) > 1:
-    SNAPSHOT_DATE = date.fromisoformat(sys.argv[1])
+    DATES_TO_BACKFILL = []
+    for arg in sys.argv[1:]:
+        y, m, d = map(int, arg.split("-"))
+        DATES_TO_BACKFILL.append(date(y, m, d))
 else:
-    SNAPSHOT_DATE = date.today() - timedelta(days=1)
+    DATES_TO_BACKFILL = [date.today() - timedelta(days=1)]
 
-API_DATE = SNAPSHOT_DATE.strftime("%d-%m-%Y")
-print(f"Backfilling for: {SNAPSHOT_DATE} (CoinGecko format: {API_DATE})")
+print(f"Backfilling: {DATES_TO_BACKFILL}")
+
+# ---------------------------
+# Extract
+# ---------------------------
 
 
-def extract_coin_data(coin, session):
-    url = f"https://api.coingecko.com/api/v3/coins/{coin}/history?date={API_DATE}"
+def extract_coin_data(
+    coin,
+    snapshot_date,
+    session
+):
+
+    url = (
+        f"https://api.coingecko.com/api/v3/coins/{coin}/history?date={snapshot_date}")
+
+    # Retry up to 3 times to handle temporary API failures
+    # such as timeouts and rate limits
     for attempt in range(3):
+
+        logging.info(f"{coin} - Attempt {attempt + 1}")
+        # error handling..
         try:
-            print(f"Fetching {coin} for {API_DATE} - Attempt {attempt+1}")
-            resp = session.get(url, timeout=10)
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            print(f"{coin} failed: {e}, retrying...")
-            time.sleep(5 * (2 ** attempt))
+
+            logging.info(f"Fetching {coin} data")
+
+            response = session.get(
+                url,
+                timeout=10
+            )
+
+            response.raise_for_status()
+
+            data = response.json()
+            logging.info(f"{coin} data pull completed")
+
+            return data
+
+        except requests.exceptions.Timeout:
+            # Exponential backoff:
+            # 5s → 10s → 20s
+            wait_time = 5 * (2 ** attempt)
+
+            logging.warning(
+                f"{coin} timed out. Waiting {wait_time} seconds before retry...")
+            time.sleep(wait_time)
+            continue
+
+        except requests.exceptions.HTTPError as e:
+
+            wait_time = 5 * (2 ** attempt)
+
+            if response.status_code == 429:
+
+                logging.warning(
+                    f"{coin} rate limited. Waiting {wait_time} seconds before retry...")
+                time.sleep(wait_time)
+                continue
+
+            logging.error(f"{coin} HTTP Error: {e}")
+            return None
+
+        except json.JSONDecodeError as e:
+            logging.error(f"{coin} returned bad JSON: {e}")
+            return None
+
+        except requests.exceptions.RequestException as e:
+            logging.error(f"{coin} Request Error: {e}")
+            return None
+
+        finally:
+            logging.info(f"{coin} attempt {attempt + 1} completed")
+
     return None
 
+# ---------------------------
+# Transform
+# ---------------------------
 
-def transform_data(data):
-    return {
+
+def transform_data(
+    data,
+    snapshot_date
+):
+
+    record = {
         "coin_id": data["id"],
         "symbol": data["symbol"],
-        "snapshot_date": SNAPSHOT_DATE,
+        "snapshot_date": snapshot_date,
         "price_usd": data["market_data"]["current_price"]["usd"],
         "market_cap_usd": data["market_data"]["market_cap"]["usd"],
         "total_volume_usd": data["market_data"]["total_volume"]["usd"],
         "ingestion_time": datetime.now()
     }
+    return record
+
+# ---------------------------
+# Validate
+# ---------------------------
 
 
-session = requests.Session()
-session.headers.update({"accept": "application/json"})
+def validate_data(df):
 
-crypto_data = []
-for coin in coins:
-    raw = extract_coin_data(coin, session)
-    if raw and "market_data" in raw:
-        crypto_data.append(transform_data(raw))
-    time.sleep(2)
+    # Ensure all requested coins were successfully extracted
+    expected_rows = len(coins)
+    if df.empty:
+        logging.error("DataFrame is empty")
+        return False
 
-df = pd.DataFrame(crypto_data)
-print(df)
+    # Detect duplicate business keys before loading
+    # (coin_id + snapshot_date)
+    duplicate_count = df.duplicated(
+        subset=[
+            "coin_id",
+            "snapshot_date"]).sum()
 
-DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-os.makedirs(DATA_DIR, exist_ok=True)
-parquet_file = os.path.join(DATA_DIR, f"crypto_prices_{SNAPSHOT_DATE}.parquet")
-df.to_parquet(parquet_file, index=False)
-print(f"Saved: {parquet_file}")
+    if len(df) != expected_rows:
+        logging.error(f"Expected {expected_rows} rows but got {len(df)}")
+        return False
 
-# --- DuckDB load ---
-conn = db.connect(DB_PATH)
-conn.execute("""
-    CREATE TABLE IF NOT EXISTS crypto_prices (
+    if duplicate_count > 0:
+        logging.error(f"Found {duplicate_count} duplicates")
+        return False
+
+    logging.info(f"Rows extracted: {len(df)}")
+    return True
+
+# ---------------------------
+# Load
+# ---------------------------
+
+# ---------------------------
+# DuckDB Load
+# ---------------------------
+
+
+def load_to_duckdb(df):
+
+    logging.info("Loading data into DuckDB")
+
+    conn = db.connect(DB_PATH)
+
+    conn.register("crypto_df", df)
+
+    # Historical warehouse table storing daily crypto snapshots
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS crypto_prices (
         "coin_id" VARCHAR,
         "symbol" VARCHAR,
         "snapshot_date" DATE,
@@ -80,44 +221,242 @@ conn.execute("""
         "market_cap_usd" DOUBLE,
         "total_volume_usd" DOUBLE,
         "ingestion_time" TIMESTAMP
-    );
-""")
+        );
+    """)
 
-before = conn.execute("SELECT COUNT(*) FROM crypto_prices").fetchall()[0][0]
+    before_count = conn.execute("""
+    SELECT COUNT(*)
+    FROM crypto_prices
+    """).fetchone()[0]
 
-conn.execute("""
-    INSERT INTO crypto_prices
-    SELECT * FROM read_parquet(?)
-    WHERE NOT EXISTS (
-        SELECT 1 FROM crypto_prices cp
-        WHERE cp.coin_id = read_parquet.coin_id
-        AND cp.snapshot_date = read_parquet.snapshot_date
-    )
-""", [parquet_file])
+    # Business key:
+    # A crypto snapshot is uniquely identified by
+    # coin_id + snapshot_date.
+    # Prevent duplicate loads when the pipeline is re-run.
+    conn.execute("""
+        INSERT INTO crypto_prices
+        SELECT *
+        FROM crypto_df cd
+        WHERE NOT EXISTS (
+        SELECT 1
+        FROM crypto_prices cp
+        WHERE cp.coin_id = cd.coin_id
+        AND cp.snapshot_date = cd.snapshot_date
 
-after = conn.execute("SELECT COUNT(*) FROM crypto_prices").fetchall()[0][0]
-print(f"Rows inserted: {after - before}")
-print(conn.execute("SELECT snapshot_date, COUNT(*) FROM crypto_prices WHERE snapshot_date = ? GROUP BY 1",
-      [SNAPSHOT_DATE]).fetchall())
-conn.close()
-
-# --- R2 upload - dynamic partition ---
-
-load_dotenv()
-s3_client = boto3.client(
-    's3',
-    endpoint_url=os.getenv("R2_ENDPOINT"),
-    aws_access_key_id=os.getenv("R2_ACCESS_KEY"),
-    aws_secret_access_key=os.getenv("R2_SECRET_KEY"),
-    region_name='auto',
-    config=Config(
-        request_checksum_calculation='when_required',
-        response_checksum_validation='when_required',
-    )
 )
+    """)
+    after_count = conn.execute("""
+    SELECT COUNT(*)
+    FROM crypto_prices
+    """).fetchone()[0]
 
-r2_key = f"crypto/{SNAPSHOT_DATE.year}/{SNAPSHOT_DATE.month:02d}/{SNAPSHOT_DATE.day:02d}/crypto_prices_{SNAPSHOT_DATE}.parquet"
-print(f"Uploading to R2: {r2_key}")
-s3_client.upload_file(parquet_file, os.getenv("R2_BUCKET"), r2_key)
-print(f"Upload successful: {r2_key}")
-print("Backfill done!")
+    conn.close()
+
+    rows_inserted = after_count - before_count
+    logging.info(f"Rows inserted: {rows_inserted}")
+    logging.info("DuckDB load completed")
+
+# ---------------------------
+# Neon Load
+# ---------------------------
+
+
+def load_to_neon(df):
+
+    logging.info("Loading data into Neon")
+
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor()
+
+    # Historical warehouse table storing daily crypto snapshots
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS crypto_prices (
+            coin_id VARCHAR,
+            symbol VARCHAR,
+            snapshot_date DATE,
+            price_usd DOUBLE PRECISION,
+            market_cap_usd DOUBLE PRECISION,
+            total_volume_usd DOUBLE PRECISION,
+            ingestion_time TIMESTAMP
+        );
+    """)
+    conn.commit()
+
+    cur.execute("SELECT COUNT(*) FROM crypto_prices")
+    before_count = cur.fetchone()[0]
+
+    # Business key:
+    # A crypto snapshot is uniquely identified by
+    # coin_id + snapshot_date.
+    # Prevent duplicate loads when the pipeline is re-run.
+    for _, row in df.iterrows():
+        cur.execute("""
+            INSERT INTO crypto_prices
+            (coin_id, symbol, snapshot_date, price_usd, market_cap_usd, total_volume_usd, ingestion_time)
+            SELECT %s, %s, %s, %s, %s, %s, %s
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM crypto_prices cp
+                WHERE cp.coin_id = %s
+                AND cp.snapshot_date = %s
+            )
+        """, (
+            row['coin_id'], row['symbol'], row['snapshot_date'],
+            row['price_usd'], row['market_cap_usd'],
+            row['total_volume_usd'], row['ingestion_time'],
+            row['coin_id'], row['snapshot_date']
+        ))
+
+    conn.commit()
+
+    cur.execute("SELECT COUNT(*) FROM crypto_prices")
+    after_count = cur.fetchone()[0]
+
+    cur.close()
+    conn.close()
+
+    rows_inserted = after_count - before_count
+    logging.info(f"Rows inserted: {rows_inserted}")
+    logging.info("Neon load completed")
+
+
+def upload_to_r2(
+    file_path,
+    snapshot_date
+):
+
+    # Try new config, fall back to old if needed (for old containers)
+    try:
+        from botocore import __version__ as botocore_version
+        print(f"botocore version: {botocore_version}")
+    except:
+        pass
+
+    try:
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=R2_ENDPOINT,
+            aws_access_key_id=R2_ACCESS_KEY,
+            aws_secret_access_key=R2_SECRET_KEY,
+            region_name='auto',
+            config=Config(
+                request_checksum_calculation='when_required',
+                response_checksum_validation='when_required',
+            )
+        )
+    except TypeError:
+        # Old botocore in Docker - use simple config
+        print("Using fallback config for old botocore")
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=R2_ENDPOINT,
+            aws_access_key_id=R2_ACCESS_KEY,
+            aws_secret_access_key=R2_SECRET_KEY,
+            region_name='auto',
+            config=Config(signature_version='s3v4')
+        )
+
+    # Store files using date-based partitions to create
+    # a scalable data lake structure
+    r2_key = f"crypto/{snapshot_date.year}/{snapshot_date.month:02d}/{snapshot_date.day:02d}/crypto_prices_{snapshot_date}.parquet"
+
+    logging.info(f"Uploading to R2: {r2_key}")
+    s3_client.upload_file(str(file_path), R2_BUCKET, r2_key)
+    logging.info(f"Upload successful: {r2_key}")
+    return r2_key
+
+# ---------------------------
+# Main Pipeline
+# ---------------------------
+
+
+def run_pipeline_for_date(
+    snapshot_date
+):
+
+    start_time = time.time()
+    logging.info(f"=== pipeline started for {snapshot_date} ===")
+
+# ---------------------------
+# Session
+# ---------------------------
+    session = requests.Session()
+
+    session.headers.update({
+        "accept": "application/json"
+    })
+    api_date = snapshot_date.strftime("%d-%m-%Y")
+
+    crypto_data = []
+
+    for i, coin in enumerate(coins):
+        if i > 0:
+            logging.info(f"Waiting 15s before {coin} to avoid rate limit...")
+            time.sleep(15)
+
+        raw_data = extract_coin_data(
+            coin,
+            api_date,
+            session
+        )
+
+        if raw_data:
+
+            clean_data = transform_data(
+                raw_data,
+                snapshot_date
+            )
+
+            crypto_data.append(clean_data)
+
+    crypto_df = pd.DataFrame(crypto_data)
+
+    logging.info("Crypto data cleaning completed")
+
+    # ---------------------------
+    # Validate & Load
+    # ---------------------------
+
+    if validate_data(crypto_df):
+
+        # ---------------------------
+        # Save Parquet
+        # ---------------------------
+
+        # 1. Create data folder path
+        DATA_DIR = "/data" if os.path.exists(
+            "/data") else os.path.join(PROJECT_ROOT, "data")
+        os.makedirs(DATA_DIR, exist_ok=True)  # create it if it doesn't exist
+
+        # 2. Save inside data folder, not PROJECT_ROOT
+        parquet_file = os.path.join(
+            DATA_DIR, f"crypto_prices_{snapshot_date}.parquet")
+        crypto_df.to_parquet(
+            parquet_file,
+            index=False
+        )
+        logging.info("Parquet file created")
+
+        logging.info("uploading `crypto_prices.parquet` to cloudflare")
+        upload_to_r2(parquet_file, snapshot_date)
+        logging.info(f"{parquet_file} uploaded successfully to cloudflare")
+
+        load_to_duckdb(crypto_df)
+        load_to_neon(crypto_df)
+
+        logging.info("Loaded to data warehouse local duckdb and Neon cloud")
+
+    end_time = time.time()
+
+    # Capture total execution time for monitoring
+    # and performance tracking
+    duration = round(end_time - start_time, 2)
+    logging.info(f"pipeline duration for {snapshot_date}: {duration} seconds")
+    logging.info("pipeline completed")
+
+
+# run pipeline
+if __name__ == "__main__":
+    for d in DATES_TO_BACKFILL:
+        run_pipeline_for_date(d)
+    logging.info("ALL BACKFILL COMPLETED")
