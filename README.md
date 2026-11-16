@@ -26,6 +26,8 @@ GitHub ➡️ Docker ➡️ Fly.io
   It is a scheduled second run, not a failover that waits for Airflow to fail.
 - GitHub scheduled workflows must be enabled and the workflow must be on the
   repository's default branch.
+- For a repeatable diagnosis checklist, see
+  [automation-troubleshooting.md](./automation-troubleshooting.md).
 
 ## Key Features
 Reliable Data Extraction
