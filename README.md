@@ -19,6 +19,14 @@ The pipeline collects daily cryptocurrency market metrics from the CoinGecko API
 ## Deployment:
 GitHub ➡️ Docker ➡️ Fly.io
 
+## Daily Automation
+
+- Airflow runs `crypto_pipeline` daily at 8:00 AM Africa/Lagos time.
+- GitHub Actions runs the daily update separately at 9:17 AM Africa/Lagos time.
+  It is a scheduled second run, not a failover that waits for Airflow to fail.
+- GitHub scheduled workflows must be enabled and the workflow must be on the
+  repository's default branch.
+
 ## Key Features
 Reliable Data Extraction
 Session-based API requests
@@ -119,14 +127,6 @@ During development, I implemented solutions for:
 - Cloud storage integration
 - Container deployment troubleshooting
 - Data validation and observability
-
-## Future Improvements
-- Build a Star Schema (dim_coin, fact_crypto_prices)
-- Query R2 Parquet files directly with DuckDB
-- Add Apache Airflow orchestration
-- Add automated data quality tests
-- Implement alerting and failure notifications
-- Introduce PySpark for large-scale processing
 
 ## Skills Demonstrated
 This project demonstrates practical experience with:

@@ -2,7 +2,7 @@
 # USER airflow
 # RUN python -m pip install --no-cache-dir duckdb==1.5.6 pandas pyarrow boto3 python-dotenv requests schedule python-dateutil
 
-FROM apache/airflow:2.8.1-python3.11
+FROM apache/airflow:2.10.4
 
 USER root
 RUN apt-get update && apt-get install -y gcc && apt-get clean
@@ -11,7 +11,7 @@ USER airflow
 WORKDIR /opt/airflow
 
 COPY requirements.txt /opt/airflow/requirements.txt
-RUN pip install --no-cache-dir duckdb boto3 requests pandas
+RUN pip install --no-cache-dir duckdb boto3 requests pandas pyarrow python-dotenv psycopg2-binary
 # RUN pip install --no-cache-dir -r /opt/airflow/requirements.txt duckdb boto3
 
 COPY airflow/dags/ /opt/airflow/dags/

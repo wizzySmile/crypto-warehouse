@@ -2,7 +2,7 @@ name: Daily Crypto Update - Backup
 
 on:
   schedule:
-    - cron: '0 7 * * *'  # 8am Lagos time every day
+    - cron: '17 8 * * *'  # 9:17am Lagos time, after Airflow and away from the top of the hour
   workflow_dispatch:
 
 jobs:
