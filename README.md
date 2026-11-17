@@ -24,6 +24,9 @@ GitHub ➡️ Docker ➡️ Fly.io
 - Airflow runs `crypto_pipeline` daily at 8:00 AM Africa/Lagos time.
 - GitHub Actions runs the daily update separately at 9:17 AM Africa/Lagos time.
   It is a scheduled second run, not a failover that waits for Airflow to fail.
+- Fly.io writes snapshots to its own `/data` volume; this does not sync files
+  to your computer. Local Airflow uses the project `data` folder and DuckDB
+  file when Docker Desktop is running.
 - GitHub scheduled workflows must be enabled and the workflow must be on the
   repository's default branch.
 - For a repeatable diagnosis checklist, see

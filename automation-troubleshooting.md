@@ -75,6 +75,15 @@ the application image, where the Airflow user may not have write permission.
 Look for `Permission denied` in the task log and verify that the effective
 database path is on the mounted volume.
 
+Fly's `/data` volume is on Fly.io; it is not your Windows `data` folder.
+The local Compose service must explicitly map `DB_PATH` to its mounted DuckDB
+file and `DATA_DIR` to `/opt/airflow/project/data` so those outputs appear in
+the repository's `data` folder. A local Docker run can also be marked successful
+if the pipeline only logs a validation failure and returns; data validation
+must raise an error so Airflow reports the task as failed and retries it.
+The local `.env` and Fly's `DATABASE_URL` secret must refer to the same Neon
+database if you expect both environments to show the same rows.
+
 After changing `Dockerfile.airflow`, rebuild and recreate the local Airflow
 service:
 

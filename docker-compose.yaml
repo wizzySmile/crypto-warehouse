@@ -33,6 +33,8 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      DB_PATH: /opt/airflow/project/crypto_warehouse.duckdb
+      DATA_DIR: /opt/airflow/project/data
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./crypto_warehouse.py:/opt/airflow/project/crypto_warehouse.py

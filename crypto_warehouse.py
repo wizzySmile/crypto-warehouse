@@ -21,6 +21,7 @@ DB_PATH = os.getenv(
     "DB_PATH",
     os.path.join(PROJECT_ROOT, "crypto_warehouse.duckdb"),
 )
+DATA_DIR = os.getenv("DATA_DIR", os.path.join(PROJECT_ROOT, "data"))
 R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID")
 R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
@@ -400,34 +401,31 @@ def run_pipeline():
     # Validate & Load
     # ---------------------------
 
-    if validate_data(crypto_df):
+    if not validate_data(crypto_df):
+        raise RuntimeError("Data validation failed; refusing to load an incomplete snapshot")
 
-        # ---------------------------
-        # Save Parquet
-        # ---------------------------
+    # ---------------------------
+    # Save Parquet
+    # ---------------------------
 
-        # 1. Create data folder path
-        DATA_DIR = "/data" if os.path.exists(
-            "/data") else os.path.join(PROJECT_ROOT, "data")
-        os.makedirs(DATA_DIR, exist_ok=True)  # create it if it doesn't exist
+    os.makedirs(DATA_DIR, exist_ok=True)
 
-        # 2. Save inside data folder, not PROJECT_ROOT
-        parquet_file = os.path.join(
-            DATA_DIR, f"crypto_prices_{snapshot_date}.parquet")
-        crypto_df.to_parquet(
-            parquet_file,
-            index=False
-        )
-        logging.info("Parquet file created")
+    parquet_file = os.path.join(
+        DATA_DIR, f"crypto_prices_{snapshot_date}.parquet")
+    crypto_df.to_parquet(
+        parquet_file,
+        index=False
+    )
+    logging.info("Parquet file created")
 
-        logging.info("uploading `crypto_prices.parquet` to cloudflare")
-        upload_to_r2(parquet_file)
-        logging.info(f"{parquet_file} uploaded successfully to cloudflare")
+    logging.info("uploading `crypto_prices.parquet` to cloudflare")
+    upload_to_r2(parquet_file)
+    logging.info(f"{parquet_file} uploaded successfully to cloudflare")
 
-        load_to_duckdb(crypto_df)
-        load_to_neon(crypto_df)
+    load_to_duckdb(crypto_df)
+    load_to_neon(crypto_df)
 
-        logging.info("Loaded to data warehouse local duckdb and Neon cloud")
+    logging.info("Loaded to data warehouse local duckdb and Neon cloud")
 
     end_time = time.time()
 

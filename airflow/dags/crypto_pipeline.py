@@ -24,6 +24,8 @@ with DAG(
     run_crypto_pipeline = PythonOperator(
         task_id="run_crypto_pipeline",
         python_callable=crypto_module.run_pipeline,
+        retries=2,
+        retry_delay=pendulum.duration(minutes=5),
     )
 
     run_crypto_pipeline

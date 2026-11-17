@@ -25,6 +25,8 @@ primary_region = 'lhr'
   AIRFLOW__CORE__LOAD_EXAMPLES = 'false'
   AIRFLOW__WEBSERVER__WORKERS = '1'
   AIRFLOW__SCHEDULER__PARSING_PROCESSES = '1'
+  DB_PATH = '/data/crypto_warehouse.duckdb'
+  DATA_DIR = '/data'
 
 [[mounts]]
   source = "crypto_data"
