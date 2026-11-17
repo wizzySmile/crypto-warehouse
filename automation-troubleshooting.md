@@ -68,6 +68,13 @@ the database had a 2.10.3 migration revision while the Dockerfile used Airflow
 2.8.1. The image was changed to Airflow 2.10.4; do not reset or delete the
 metadata database to work around a version mismatch.
 
+The pipeline must also honor the `DB_PATH` environment variable. Fly mounts its
+persistent data volume at `/data` and configures `DB_PATH=/data/crypto_warehouse.duckdb`.
+If the Python code ignores `DB_PATH`, it may try to write the database inside
+the application image, where the Airflow user may not have write permission.
+Look for `Permission denied` in the task log and verify that the effective
+database path is on the mounted volume.
+
 After changing `Dockerfile.airflow`, rebuild and recreate the local Airflow
 service:
 

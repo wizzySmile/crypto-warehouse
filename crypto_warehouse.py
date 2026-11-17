@@ -13,11 +13,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(PROJECT_ROOT, "crypto_warehouse.duckdb")
 
 # Load Cloudflare R2 credentials from local .env file
 # In Fly.io these values are provided through secrets instead
 load_dotenv()
+DB_PATH = os.getenv(
+    "DB_PATH",
+    os.path.join(PROJECT_ROOT, "crypto_warehouse.duckdb"),
+)
 R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID")
 R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
