@@ -28,8 +28,8 @@ GitHub ➡️ Docker ➡️ Fly.io
   to your computer. Local Airflow uses the project `data` folder and DuckDB
   file when Docker Desktop is running.
 - Configure `NEON_DATABASE_URL` as a secret in both Fly.io and GitHub Actions
-  to load those scheduled runs into Neon. Local runs can use `DATABASE_URL`
-  from `.env`.
+  to load those scheduled runs into Neon. Set `NEON_DATABASE_URL` in `.env`
+  for local runs; the legacy `DATABASE_URL` key is also supported.
 - GitHub scheduled workflows must be enabled and the workflow must be on the
   repository's default branch.
 - For a repeatable diagnosis checklist, see

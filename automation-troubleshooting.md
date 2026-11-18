@@ -64,8 +64,8 @@ Set `NEON_DATABASE_URL` in Fly.io with
 `fly secrets set NEON_DATABASE_URL="<your Neon connection URL>" -a crypto-warehouse`,
 and add a repository Actions secret with the same name. The app deliberately
 refuses to use Fly's default `DATABASE_URL` on Fly or GitHub Actions, since that
-may point to a different database. For local runs, `DATABASE_URL` in `.env`
-remains a supported fallback.
+may point to a different database. For local runs, set `NEON_DATABASE_URL` in
+`.env`; `DATABASE_URL` remains a supported legacy fallback.
 
 The Airflow image must include the pipeline's runtime dependencies, including
 `pyarrow`, `python-dotenv`, and `psycopg2-binary`. Its Airflow version must also

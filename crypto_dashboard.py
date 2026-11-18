@@ -7,12 +7,23 @@ import time
 
 load_dotenv()
 
-# On Streamlit Cloud, DATABASE_URL comes from Secrets
-# On my laptop, it comes from .env
+# Prefer the explicit Neon setting; retain the legacy key as a fallback.
 try:
-    DATABASE_URL = st.secrets["DATABASE_URL"]
-except Exception:
-    DATABASE_URL = os.getenv("DATABASE_URL")
+    NEON_DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
+except (KeyError, FileNotFoundError):
+    try:
+        NEON_DATABASE_URL = st.secrets["DATABASE_URL"]
+    except (KeyError, FileNotFoundError):
+        NEON_DATABASE_URL = None
+
+NEON_DATABASE_URL = (
+    NEON_DATABASE_URL
+    or os.getenv("NEON_DATABASE_URL")
+    or os.getenv("DATABASE_URL")
+)
+
+if not NEON_DATABASE_URL:
+    raise RuntimeError("NEON_DATABASE_URL is not configured")
 
 st.set_page_config(page_title="Crypto Warehouse", layout="wide")
 st.title("Crypto Warehouse - Neon Dashboard")
@@ -20,7 +31,7 @@ st.title("Crypto Warehouse - Neon Dashboard")
 
 @st.cache_data(ttl=60)
 def load_data():
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = psycopg2.connect(NEON_DATABASE_URL)
     df = pd.read_sql(
         "SELECT * FROM crypto_prices ORDER BY snapshot_date", conn)
     conn.close()

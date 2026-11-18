@@ -27,7 +27,7 @@ R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT")
 R2_BUCKET = os.getenv("R2_BUCKET")
-DATABASE_URL = os.getenv("DATABASE_URL")
+LEGACY_DATABASE_URL = os.getenv("DATABASE_URL")
 NEON_DATABASE_URL = os.getenv("NEON_DATABASE_URL")
 
 # ---------------------------
@@ -258,7 +258,7 @@ def load_to_neon(df):
             raise RuntimeError(
                 "NEON_DATABASE_URL must be configured for Fly.io and GitHub Actions"
             )
-        database_url = DATABASE_URL
+        database_url = LEGACY_DATABASE_URL
 
     if not database_url:
         raise RuntimeError("NEON_DATABASE_URL is not configured")
