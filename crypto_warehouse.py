@@ -28,6 +28,7 @@ R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT")
 R2_BUCKET = os.getenv("R2_BUCKET")
 DATABASE_URL = os.getenv("DATABASE_URL")
+NEON_DATABASE_URL = os.getenv("NEON_DATABASE_URL")
 
 # ---------------------------
 # Logging Configuration
@@ -251,7 +252,18 @@ def load_to_neon(df):
 
     logging.info("Loading data into Neon")
 
-    conn = psycopg2.connect(DATABASE_URL)
+    database_url = NEON_DATABASE_URL
+    if not database_url:
+        if os.getenv("FLY_APP_NAME") or os.getenv("GITHUB_ACTIONS") == "true":
+            raise RuntimeError(
+                "NEON_DATABASE_URL must be configured for Fly.io and GitHub Actions"
+            )
+        database_url = DATABASE_URL
+
+    if not database_url:
+        raise RuntimeError("NEON_DATABASE_URL is not configured")
+
+    conn = psycopg2.connect(database_url)
     cur = conn.cursor()
 
     # Historical warehouse table storing daily crypto snapshots

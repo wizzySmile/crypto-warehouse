@@ -55,11 +55,17 @@ history, check whether the latest run is `success`, `failed`, or absent.
 
 ## 4. Check configuration and dependencies
 
-The pipeline needs `DATABASE_URL`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY`,
+The pipeline needs `NEON_DATABASE_URL`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY`,
 `R2_SECRET_KEY`, `R2_ENDPOINT`, and `R2_BUCKET` in the relevant platform's
 secrets. `flyctl secrets list -a crypto-warehouse` shows configured secret
 names without showing their values. Check GitHub repository Actions secrets
 separately. Never paste secret values into logs, chat, or issue reports.
+Set `NEON_DATABASE_URL` in Fly.io with
+`fly secrets set NEON_DATABASE_URL="<your Neon connection URL>" -a crypto-warehouse`,
+and add a repository Actions secret with the same name. The app deliberately
+refuses to use Fly's default `DATABASE_URL` on Fly or GitHub Actions, since that
+may point to a different database. For local runs, `DATABASE_URL` in `.env`
+remains a supported fallback.
 
 The Airflow image must include the pipeline's runtime dependencies, including
 `pyarrow`, `python-dotenv`, and `psycopg2-binary`. Its Airflow version must also
@@ -81,7 +87,7 @@ file and `DATA_DIR` to `/opt/airflow/project/data` so those outputs appear in
 the repository's `data` folder. A local Docker run can also be marked successful
 if the pipeline only logs a validation failure and returns; data validation
 must raise an error so Airflow reports the task as failed and retries it.
-The local `.env` and Fly's `DATABASE_URL` secret must refer to the same Neon
+The local `.env` and deployed `NEON_DATABASE_URL` must refer to the same Neon
 database if you expect both environments to show the same rows.
 
 After changing `Dockerfile.airflow`, rebuild and recreate the local Airflow
