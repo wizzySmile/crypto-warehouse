@@ -29,5 +29,5 @@ primary_region = 'lhr'
   DATA_DIR = '/data'
 
 [[mounts]]
-  source = "crypto_data"
+  source = "crypto_data_recovered"
   destination = "/data"
