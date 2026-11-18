@@ -29,7 +29,7 @@ GitHub ➡️ Docker ➡️ Fly.io
   file when Docker Desktop is running.
 - Configure `NEON_DATABASE_URL` as a secret in both Fly.io and GitHub Actions
   to load those scheduled runs into Neon. Set `NEON_DATABASE_URL` in `.env`
-  for local runs; the legacy `DATABASE_URL` key is also supported.
+  for local runs.
 - GitHub scheduled workflows must be enabled and the workflow must be on the
   repository's default branch.
 - For a repeatable diagnosis checklist, see

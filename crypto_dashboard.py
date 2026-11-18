@@ -7,20 +7,11 @@ import time
 
 load_dotenv()
 
-# Prefer the explicit Neon setting; retain the legacy key as a fallback.
+# Read the explicit Neon setting from Streamlit Secrets or the local environment.
 try:
     NEON_DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
 except (KeyError, FileNotFoundError):
-    try:
-        NEON_DATABASE_URL = st.secrets["DATABASE_URL"]
-    except (KeyError, FileNotFoundError):
-        NEON_DATABASE_URL = None
-
-NEON_DATABASE_URL = (
-    NEON_DATABASE_URL
-    or os.getenv("NEON_DATABASE_URL")
-    or os.getenv("DATABASE_URL")
-)
+    NEON_DATABASE_URL = os.getenv("NEON_DATABASE_URL")
 
 if not NEON_DATABASE_URL:
     raise RuntimeError("NEON_DATABASE_URL is not configured")
